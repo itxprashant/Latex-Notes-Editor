@@ -21456,6 +21456,217 @@
       "&:after": { content: "'abc'", fontSize: "50%", verticalAlign: "middle" }
     }
   });
+  var FieldPos = class {
+    constructor(field, line, from, to) {
+      this.field = field;
+      this.line = line;
+      this.from = from;
+      this.to = to;
+    }
+  };
+  var FieldRange = class _FieldRange {
+    constructor(field, from, to) {
+      this.field = field;
+      this.from = from;
+      this.to = to;
+    }
+    map(changes) {
+      let from = changes.mapPos(this.from, -1, MapMode.TrackDel);
+      let to = changes.mapPos(this.to, 1, MapMode.TrackDel);
+      return from == null || to == null ? null : new _FieldRange(this.field, from, to);
+    }
+  };
+  var Snippet = class _Snippet {
+    constructor(lines, fieldPositions) {
+      this.lines = lines;
+      this.fieldPositions = fieldPositions;
+    }
+    instantiate(state, pos) {
+      let text = [], lineStart = [pos];
+      let lineObj = state.doc.lineAt(pos), baseIndent = /^\s*/.exec(lineObj.text)[0];
+      for (let line of this.lines) {
+        if (text.length) {
+          let indent = baseIndent, tabs = /^\t*/.exec(line)[0].length;
+          for (let i = 0; i < tabs; i++)
+            indent += state.facet(indentUnit);
+          lineStart.push(pos + indent.length - tabs);
+          line = indent + line.slice(tabs);
+        }
+        text.push(line);
+        pos += line.length + 1;
+      }
+      let ranges = this.fieldPositions.map((pos2) => new FieldRange(pos2.field, lineStart[pos2.line] + pos2.from, lineStart[pos2.line] + pos2.to));
+      return { text, ranges };
+    }
+    static parse(template) {
+      let fields = [];
+      let lines = [], positions = [], m;
+      for (let line of template.split(/\r\n?|\n/)) {
+        while (m = /[#$]\{(?:(\d+)(?::([^}]*))?|((?:\\[{}]|[^}])*))\}/.exec(line)) {
+          let seq = m[1] ? +m[1] : null, rawName = m[2] || m[3] || "", found = -1;
+          let name2 = rawName.replace(/\\[{}]/g, (m2) => m2[1]);
+          for (let i = 0; i < fields.length; i++) {
+            if (seq != null ? fields[i].seq == seq : name2 ? fields[i].name == name2 : false)
+              found = i;
+          }
+          if (found < 0) {
+            let i = 0;
+            while (i < fields.length && (seq == null || fields[i].seq != null && fields[i].seq < seq))
+              i++;
+            fields.splice(i, 0, { seq, name: name2 });
+            found = i;
+            for (let pos of positions)
+              if (pos.field >= found)
+                pos.field++;
+          }
+          positions.push(new FieldPos(found, lines.length, m.index, m.index + name2.length));
+          line = line.slice(0, m.index) + rawName + line.slice(m.index + m[0].length);
+        }
+        line = line.replace(/\\([{}])/g, (_, brace, index) => {
+          for (let pos of positions)
+            if (pos.line == lines.length && pos.from > index) {
+              pos.from--;
+              pos.to--;
+            }
+          return brace;
+        });
+        lines.push(line);
+      }
+      return new _Snippet(lines, positions);
+    }
+  };
+  var fieldMarker = /* @__PURE__ */ Decoration.widget({ widget: /* @__PURE__ */ new class extends WidgetType {
+    toDOM() {
+      let span = document.createElement("span");
+      span.className = "cm-snippetFieldPosition";
+      return span;
+    }
+    ignoreEvent() {
+      return false;
+    }
+  }() });
+  var fieldRange = /* @__PURE__ */ Decoration.mark({ class: "cm-snippetField" });
+  var ActiveSnippet = class _ActiveSnippet {
+    constructor(ranges, active) {
+      this.ranges = ranges;
+      this.active = active;
+      this.deco = Decoration.set(ranges.map((r) => (r.from == r.to ? fieldMarker : fieldRange).range(r.from, r.to)));
+    }
+    map(changes) {
+      let ranges = [];
+      for (let r of this.ranges) {
+        let mapped = r.map(changes);
+        if (!mapped)
+          return null;
+        ranges.push(mapped);
+      }
+      return new _ActiveSnippet(ranges, this.active);
+    }
+    selectionInsideField(sel) {
+      return sel.ranges.every((range) => this.ranges.some((r) => r.field == this.active && r.from <= range.from && r.to >= range.to));
+    }
+  };
+  var setActive = /* @__PURE__ */ StateEffect.define({
+    map(value, changes) {
+      return value && value.map(changes);
+    }
+  });
+  var moveToField = /* @__PURE__ */ StateEffect.define();
+  var snippetState = /* @__PURE__ */ StateField.define({
+    create() {
+      return null;
+    },
+    update(value, tr) {
+      for (let effect of tr.effects) {
+        if (effect.is(setActive))
+          return effect.value;
+        if (effect.is(moveToField) && value)
+          return new ActiveSnippet(value.ranges, effect.value);
+      }
+      if (value && tr.docChanged)
+        value = value.map(tr.changes);
+      if (value && tr.selection && !value.selectionInsideField(tr.selection))
+        value = null;
+      return value;
+    },
+    provide: (f) => EditorView.decorations.from(f, (val) => val ? val.deco : Decoration.none)
+  });
+  function fieldSelection(ranges, field) {
+    return EditorSelection.create(ranges.filter((r) => r.field == field).map((r) => EditorSelection.range(r.from, r.to)));
+  }
+  function snippet(template) {
+    let snippet2 = Snippet.parse(template);
+    return (editor2, completion, from, to) => {
+      let { text, ranges } = snippet2.instantiate(editor2.state, from);
+      let { main } = editor2.state.selection;
+      let spec = {
+        changes: { from, to: to == main.from ? main.to : to, insert: Text.of(text) },
+        scrollIntoView: true,
+        annotations: completion ? [pickedCompletion.of(completion), Transaction.userEvent.of("input.complete")] : void 0
+      };
+      if (ranges.length)
+        spec.selection = fieldSelection(ranges, 0);
+      if (ranges.some((r) => r.field > 0)) {
+        let active = new ActiveSnippet(ranges, 0);
+        let effects = spec.effects = [setActive.of(active)];
+        if (editor2.state.field(snippetState, false) === void 0)
+          effects.push(StateEffect.appendConfig.of([snippetState, addSnippetKeymap, snippetPointerHandler, baseTheme4]));
+      }
+      editor2.dispatch(editor2.state.update(spec));
+    };
+  }
+  function moveField(dir) {
+    return ({ state, dispatch }) => {
+      let active = state.field(snippetState, false);
+      if (!active || dir < 0 && active.active == 0)
+        return false;
+      let next = active.active + dir, last = dir > 0 && !active.ranges.some((r) => r.field == next + dir);
+      dispatch(state.update({
+        selection: fieldSelection(active.ranges, next),
+        effects: setActive.of(last ? null : new ActiveSnippet(active.ranges, next)),
+        scrollIntoView: true
+      }));
+      return true;
+    };
+  }
+  var clearSnippet = ({ state, dispatch }) => {
+    let active = state.field(snippetState, false);
+    if (!active)
+      return false;
+    dispatch(state.update({ effects: setActive.of(null) }));
+    return true;
+  };
+  var nextSnippetField = /* @__PURE__ */ moveField(1);
+  var prevSnippetField = /* @__PURE__ */ moveField(-1);
+  var defaultSnippetKeymap = [
+    { key: "Tab", run: nextSnippetField, shift: prevSnippetField },
+    { key: "Escape", run: clearSnippet }
+  ];
+  var snippetKeymap = /* @__PURE__ */ Facet.define({
+    combine(maps) {
+      return maps.length ? maps[0] : defaultSnippetKeymap;
+    }
+  });
+  var addSnippetKeymap = /* @__PURE__ */ Prec.highest(/* @__PURE__ */ keymap.compute([snippetKeymap], (state) => state.facet(snippetKeymap)));
+  function snippetCompletion(template, completion) {
+    return Object.assign(Object.assign({}, completion), { apply: snippet(template) });
+  }
+  var snippetPointerHandler = /* @__PURE__ */ EditorView.domEventHandlers({
+    mousedown(event, view) {
+      let active = view.state.field(snippetState, false), pos;
+      if (!active || (pos = view.posAtCoords({ x: event.clientX, y: event.clientY })) == null)
+        return false;
+      let match = active.ranges.find((r) => r.from <= pos && r.to >= pos);
+      if (!match || match.field == active.active)
+        return false;
+      view.dispatch({
+        selection: fieldSelection(active.ranges, match.field),
+        effects: setActive.of(active.ranges.some((r) => r.field > match.field) ? new ActiveSnippet(active.ranges, match.field) : null),
+        scrollIntoView: true
+      });
+      return true;
+    }
+  });
   var defaults2 = {
     brackets: ["(", "[", "{", "'", '"'],
     before: ")]}:;>",
@@ -22522,7 +22733,66 @@
   var stex = mkStex(false);
   var stexMath = mkStex(true);
 
+  // latex-completions.js
+  var myCompletions = [
+    { label: "\\alpha", type: "keyword" },
+    { label: "\\beta", type: "keyword" },
+    { label: "\\gamma", type: "keyword" },
+    { label: "\\delta", type: "keyword" },
+    { label: "\\epsilon", type: "keyword" },
+    { label: "\\zeta", type: "keyword" },
+    { label: "\\eta", type: "keyword" },
+    { label: "\\theta", type: "keyword" },
+    { label: "\\iota", type: "keyword" },
+    { label: "\\kappa", type: "keyword" },
+    { label: "\\lambda", type: "keyword" },
+    { label: "\\mu", type: "keyword" },
+    { label: "\\nu", type: "keyword" },
+    { label: "\\xi", type: "keyword" },
+    { label: "\\pi", type: "keyword" },
+    { label: "\\rho", type: "keyword" },
+    { label: "\\sigma", type: "keyword" },
+    { label: "\\tau", type: "keyword" },
+    { label: "\\upsilon", type: "keyword" },
+    { label: "\\phi", type: "keyword" },
+    { label: "\\chi", type: "keyword" },
+    { label: "\\psi", type: "keyword" },
+    { label: "\\omega", type: "keyword" },
+    // capital letters
+    { label: "\\Alpha", type: "keyword" },
+    { label: "\\Beta", type: "keyword" },
+    { label: "\\Gamma", type: "keyword" },
+    { label: "\\Delta", type: "keyword" },
+    { label: "\\Epsilon", type: "keyword" },
+    { label: "\\Zeta", type: "keyword" },
+    { label: "\\Eta", type: "keyword" },
+    { label: "\\Theta", type: "keyword" },
+    { label: "\\Iota", type: "keyword" },
+    { label: "\\Kappa", type: "keyword" },
+    { label: "\\Lambda", type: "keyword" },
+    { label: "\\Mu", type: "keyword" },
+    { label: "\\Nu", type: "keyword" },
+    { label: "\\Xi", type: "keyword" },
+    { label: "\\Pi", type: "keyword" },
+    { label: "\\Rho", type: "keyword" },
+    { label: "\\Sigma", type: "keyword" },
+    { label: "\\Tau", type: "keyword" },
+    { label: "\\Upsilon", type: "keyword" },
+    { label: "\\Phi", type: "keyword" },
+    { label: "\\Chi", type: "keyword" },
+    { label: "\\Psi", type: "keyword" },
+    { label: "\\Omega", type: "keyword" }
+  ];
+
   // renderer.js
+  var myCompletionSource = (context) => {
+    let word = context.matchBefore(/\w*/);
+    if (!word) return null;
+    return {
+      from: word.from,
+      options: myCompletions
+    };
+  };
   var editor = new EditorView({
     state: EditorState.create({
       // doc: "% Write your LaTeX here...",
@@ -22530,27 +22800,56 @@
         basicSetup,
         StreamLanguage.define(stex),
         autocompletion(
-          //   {
-          //   override: [myCompletionSource],
-          // }
+          {
+            override: [
+              myCompletionSource,
+              (context) => {
+                const matchBefore = context.matchBefore(/<\w*/);
+                if (!matchBefore) {
+                  return null;
+                }
+                console.log(context);
+                return {
+                  from: matchBefore.from,
+                  options: [
+                    snippetCompletion(
+                      "\\begin{document}\n#{}\n\\end{document}",
+                      {
+                        label: "<begin"
+                      }
+                    )
+                  ]
+                };
+              }
+            ]
+          }
         ),
         // snippet(),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             const doc2 = update.state.doc.toString();
-            console.log("Document changed:", doc2);
             const tree = syntaxTree(update.state);
-            console.log("Syntax Tree:", tree);
             const cursor = update.state.selection.main.head;
-            console.log("Cursor position:", cursor);
             const mathNode = tree.resolve(cursor, -1);
-            console.log("Math Node:", mathNode);
             let nodeBefore = syntaxTree(update.state).resolveInner(cursor, -1);
-            console.log("Node before is", nodeBefore.name);
           }
         })
       ]
     }),
     parent: document.getElementById("editor")
   });
+  function getEditorContents() {
+    let content2 = editor.state.doc.toString();
+    console.log(content2);
+    return content2;
+  }
+  function createNewDocument() {
+    editor.dispatch({
+      changes: { from: 0, to: editor.state.doc.length, insert: "" }
+    });
+  }
+  var print_button = document.getElementById("print-button");
+  print_button.addEventListener("click", getEditorContents);
+  var new_button = document.getElementById("new-button");
+  new_button.addEventListener("click", createNewDocument);
 })();

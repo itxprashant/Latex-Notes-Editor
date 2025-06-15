@@ -8,6 +8,7 @@
     "start": "npx esbuild renderer.js --bundle --outfile=bundle.js && electron .",
     "dev": "electron ."
   },
+  "type": "module",
   "author": "Prashant",
   "license": "ISC",
   "devDependencies": {
