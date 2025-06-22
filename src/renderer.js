@@ -1,8 +1,8 @@
 import './index.css';
-import { EditorState } from '@codemirror/state';
-import { EditorView, basicSetup,  } from 'codemirror';
-import { stex } from "@codemirror/legacy-modes/mode/stex";
-import { StreamLanguage } from "@codemirror/language";
+import { myCompletions } from './latex-completions';
+import { createEditor, clearEditor, setEditorContents } from './editor_utils';
+import { Terminal } from 'xterm';
+import { FitAddon } from 'xterm-addon-fit';
 
 // test stuffs
 console.log('👋 This message is being logged by "renderer.js", included via webpack');
@@ -16,53 +16,67 @@ const fileContentElement = document.getElementById('fileContent')
 
 
 // setup codemirror
-export const editor = new EditorView({
-    state: EditorState.create({
-        extensions: [basicSetup,
-            StreamLanguage.define(stex),
-        ],
-    }),
-    parent: document.getElementById('editor')
-})
+export const editor = createEditor();
+
+// terminal
+// const terminalContainer = document.getElementById('terminal');
+// const term = new Terminal();
+// const fitAddon = new FitAddon();
+// term.loadAddon(fitAddon);
+// term.open(terminalContainer);
+// fitAddon.fit();
+
+// term.writeln("Welcome to xtermjs terminal!!");
 
 
-export function clearEditor(){
-  let content = editor.state.doc.toString();
-  console.log(content);
-  editor.dispatch({
-    changes: { from: 0, to: editor.state.doc.length, insert: "" }
-  });
-}
+// term.onData(data => {
+//   term.write(data);
+// })
 
 const clearButton = document.getElementById('clearButton')
 clearButton.addEventListener('click', async () => {
-    clearEditor();
-    console.log("cleared contents")
+  clearEditor(editor);
+  console.log("cleared contents")
 })
 
-export function setEditorContents(contents) {
-  editor.dispatch({
-    changes: { from: 0, to: editor.state.doc.length, insert: contents }
-  });
-}
 
 btn.addEventListener('click', async () => {
   const fileData = await window.electronAPI.openFile()
   filePathElement.innerText = fileData[0]
-//   fileContentElement.innerText = fileData[1]
-  setEditorContents(fileData[1])
+  //   fileContentElement.innerText = fileData[1]
+  setEditorContents(editor, fileData[1])
 })
 
 const saveButton = document.getElementById('saveButton');
+const saveAsButton = document.getElementById('saveAsButton');
 
 saveButton.addEventListener('click', async () => {
   const content = editor.state.doc.toString();
-  const filePath = filePathElement.textContent; // Assuming this holds the current file path
+  const filePath = filePathElement.innerText; // Assuming this holds the current file path
   try {
-    const savedFilePath = await window.electronAPI.saveFile(filePath, content);
-    filePathElement.textContent = savedFilePath; // Update the file path if a new file was saved
-    console.log('File saved:', savedFilePath);
+    await window.electronAPI.saveFile(filePath, content);
+    // filePathElement.innerText = savedFilePath; // Update the file path if a new file was saved
+    console.log('File saved:', filePath);
   } catch (error) {
     console.error('Failed to save file:', error);
   }
 });
+
+saveAsButton.addEventListener('click', async () => {
+  const content = editor.state.doc.toString();
+  const filePath = filePathElement.innerText; // Assuming this holds the current file path
+  try {
+    await window.electronAPI.saveFileAs(filePath, content);
+    // filePathElement.innerText = savedFilePath; // Update the file path if a new file was saved
+    console.log('File saved:', filePath);
+  } catch (error) {
+    console.error('Failed to save file:', error);
+  }
+});
+
+const compileBtn = document.getElementById("compileButton");
+
+compileBtn.addEventListener('click', async () => {
+  const filePath = filePathElement.innerText;
+  await window.electronAPI.compileFile(filePath);
+})
