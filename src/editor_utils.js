@@ -6,6 +6,41 @@ import { myCompletions, myCompletionSource } from './latex-completions';
 import { autocompletion, CompletionContext, snippetCompletion } from "@codemirror/autocomplete";
 import { syntaxTree } from '@codemirror/language';
 
+export function isCursorInMathMode(editor) {
+    const cursorPos = editor.state.selection.main.head;
+    const tree = syntaxTree(editor.state);
+    let nodeAtCursor = tree.resolve(cursorPos);
+
+    while (nodeAtCursor) {
+        console.log(`Node is: ${nodeAtCursor.name}`);
+        if (nodeAtCursor.name === 'Math') {
+            console.log("Found Math node at cursor position");
+            return true;
+        }
+        nodeAtCursor = nodeAtCursor.parent;
+    }
+
+    // Check if the node at the cursor is a math node
+}
+
+export function checkIfBetween(editor, tag){
+    const cursorPos = editor.state.selection.main.head;
+    const textBefore = editor.state.doc.sliceString(0, cursorPos);
+    const textAfter = editor.state.doc.sliceString(cursorPos);
+
+    // const beforeRegex = new RegExp(`\\begin\{${tag}\}`);
+    // const afterRegex = new RegExp(`\\end\{${tag}\}`);
+    const beforeRegex = new RegExp(`\\\\begin\\\{${tag}\\\}`);
+    const afterRegex = new RegExp(`\\\\end\\\{${tag}\\\}`);
+
+    // match the text before the cursor
+    const beforeMatch = textBefore.match(beforeRegex);
+    // match the text after the cursor
+    const afterMatch = textAfter.match(afterRegex);
+    return (beforeMatch && afterMatch) ? true : false;
+}
+
+
 export function createEditor() {
     const editor = new EditorView({
         state: EditorState.create({
@@ -39,24 +74,11 @@ export function createEditor() {
 
                 EditorView.updateListener.of((update) => {
                     if (update.changes) {
-                        const tree = syntaxTree(update.state);
-                        const cursor = update.state.selection.main.head;
-                        let inMathMode = false;
-
-                        tree.iterate({
-                            enter: (node) => {
-                                console.log("node is: ", node)
-                                if (node.type.name === "MathShift" || node.type.name === "InlineMath") {
-                                    if (cursor >= node.from && cursor <= node.to) {
-                                        inMathMode = true;
-                                    }
-                                }
-                            }
-                        });
-
-                        console.log("Cursor in math mode:", inMathMode);
+                        console.log(`is between: ${checkIfBetween(editor, 'cult')}`);
                     }
-                })
+                }),
+
+                
             ],
         }),
         parent: document.getElementById('editor')
@@ -83,3 +105,4 @@ export function setEditorContents(editor, contents) {
         changes: { from: 0, to: editor.state.doc.length, insert: contents }
     });
 }
+

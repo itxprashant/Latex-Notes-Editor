@@ -2,6 +2,7 @@ const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const path = require('node:path');
 const fs = require("fs");
 const { exec } = require('child_process');
+const exp = require('node:constants');
 
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
@@ -111,11 +112,40 @@ async function compileFile(filePath) {
   });
 }
 
+export async function getLogs() {
+  try {
+    const logs = await fs.promises.readFile('./exported/document.log', 'utf-8');
+    return logs;
+  } catch (error) {
+    console.error('Error reading log file:', error);
+    throw error;
+  }
+}
+
 app.whenReady().then(() => {
   ipcMain.handle('dialog:openFile', handleFileOpen)
+  ipcMain.handle('file:getPDF', async (event, filePath) => {
+    try {
+      const pdfPath = path.join(process.cwd(), 'exported', path.basename(filePath, '.tex') + '.pdf');
+      if (fs.existsSync(pdfPath)) {
+        console.log(`pdfPath is: ${pdfPath}`);
+        return pdfPath;
+      } else {
+        console.log(`pdfPath is: ${pdfPath}`);
+        console.log(`file doesn't exist`);
+        // throw new Error('PDF file does not exist.');
+      }
+    } catch (error) {
+      console.error('Error getting PDF:', error);
+      throw error;
+    }
+  })
   ipcMain.handle('file:compileFile', async (event, filePath) => {
     compileFile(filePath);
   })
+  ipcMain.handle('file:getLogs', async (event) => {
+    return await getLogs();
+  });
   ipcMain.handle('dialog:saveFile', async (event, filePath, content) => {
     await handleSaveCurrentFile(filePath, content);
 });

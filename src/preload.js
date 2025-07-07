@@ -14,4 +14,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveFileAs: (filePath, content) => ipcRenderer.invoke('dialog:saveFileAs', filePath, content), 
   sendCommand: (command, filePath) => ipcRenderer.invoke('executeCommand', command, filePath),
   compileFile: (filePath) => ipcRenderer.invoke('file:compileFile', filePath),
+  getLogs: () => ipcRenderer.invoke('file:getLogs'),
+  getPDF: (filePath) => ipcRenderer.invoke('file:getPDF', filePath),
 })

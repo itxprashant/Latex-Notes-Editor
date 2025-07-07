@@ -79,4 +79,32 @@ const compileBtn = document.getElementById("compileButton");
 compileBtn.addEventListener('click', async () => {
   const filePath = filePathElement.innerText;
   await window.electronAPI.compileFile(filePath);
+
+})
+
+const viewLogsButton = document.getElementById('viewLogsButton');
+viewLogsButton.addEventListener('click', async () => {
+  const logs = await window.electronAPI.getLogs();
+  console.log(logs);
+  // display logs in a modal or a new window
+  const logwindow = window.open('', '_blank');
+  logwindow.document.write('<pre>' + logs + '</pre>');
+});
+
+// create an iframe pdf viewer
+const viewPDFButton = document.getElementById('viewPDFButton');
+
+viewPDFButton.addEventListener('click', async () => {
+  // const pdfPath = './exported/document.pdf'; // Replace with your actual PDF path
+
+  const pdfPath = await window.electronAPI.getPDF(filePathElement.innerText);
+
+  // Check if the PDF file exists
+  try {
+    const pdfViewer = window.open('', '_blank');
+    pdfViewer.document.write(`<iframe src="${pdfPath}" width="100%" height="100%"></iframe>`);
+  } catch (error) {
+    console.error('PDF file does not exist:', error);
+    alert('PDF file does not exist. Please compile the LaTeX document first.');
+  }
 })
